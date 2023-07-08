@@ -4,10 +4,52 @@ import gradio as gr
 
 from difflib import Differ
 
-from modules import script_callbacks, shared, images, ui_common
+from modules import script_callbacks, shared, images, ui_common, deepbooru
 from modules.call_queue import wrap_gradio_call
 
 import modules.generation_parameters_copypaste as parameters_copypaste
+
+DEFAULT_NEGATIVE = 'SimpleNegative, EasyNegative, (badhandv4), negative_hand-neg, ng_deepnegative_v1_75t, (worst quality:1.3), (low quality:1), (normal quality:1.4), lowres, skin spots, acnes, skin blemishes, age spot, glan, extra fingers, fewer fingers, strange fingers, bad hand, bad anatomy, fused fingers, missing leg, mutated hand, malformed limbs, missing feet, multiple legs, extra hands, extra foots, lori, '
+
+def interrogator(image):
+    if image is None:
+        return '', '', '', '', '', ''
+
+    # call interrogate
+    prompt = shared.interrogator.interrogate(image.convert("RGB"))
+
+    return prepare_pnginfo(image, prompt)
+
+def interrogate_deepbooru(image):
+    if image is None:
+        return '', '', '', '', '', ''
+
+    # deepboru
+    prompt = deepbooru.model.tag(image)
+
+    return prepare_pnginfo(image, prompt)
+
+def prepare_pnginfo(image, prompt):
+    # replace _ to spaces
+    prompt = prompt.replace('_', ' ')
+
+    # read geninfo if it available
+    geninfo, _ = images.read_info_from_image(image)
+
+    info = ""
+    if geninfo is not None:
+        res, lastline = parse_prompt(geninfo)
+        info = "Prompt by deepbooru/interrogate"
+        negative = res["Negative prompt"]
+    else:
+        clip_skip = shared.opts.CLIP_stop_at_last_layers
+        negative = shared.opts.data.get("pnginfo_diff_default_neg_prompt", DEFAULT_NEGATIVE)
+        w, h = image.size
+        lastline = f"Steps: 20, Sampler: DPM++ 2M Karras, CFG scale:7, Seed: -1, Size: {w}x{h}, Clip skip: {clip_skip}"
+        geninfo = prompt + "\n\n" + "Negative prompt: " + negative + "\n" + lastline
+        info = "Prompt by deepbooru/interrogate, default negative prompt used, image size detected"
+
+    return '', geninfo, prompt, negative, lastline, info
 
 def run_pnginfo(image):
     if image is None:
@@ -167,10 +209,15 @@ def diff_texts(direct, text1, text2):
 def add_tab():
     with gr.Blocks(analytics_enabled=False) as pnginfo_diff:
         with gr.Row().style(equal_height=False):
-            with gr.Column(variant='panel'):
+            with gr.Column(scale=4, variant='compact'):
                 image1 = gr.Image(elem_id="pnginfo_image1", label="Source", source="upload", interactive=True, type="pil")
 
-            with gr.Column(variant='panel'):
+            with gr.Column(scale=1, elem_classes="interrogate-col"):
+                interrogate = gr.Button('Interrogate\nCLIP', elem_id="interrogate")
+                deepbooru = gr.Button('Interrogate\nDeepBooru', elem_id="deepbooru")
+                pnginfo = gr.Button('Get\nPNG Info', elem_id="pnginfo")
+
+            with gr.Column(scale=6, variant='compact'):
                 html1 = gr.HTML()
                 prompt1 = gr.Textbox(label="Prompt", elem_id="prompt1", show_label=False, interactive=False, placeholder="Prompt", lines=3, elem_classes=["prompt"])
                 negative1 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt1", interactive=False, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"])
@@ -186,13 +233,18 @@ def add_tab():
                     ))
 
         with gr.Row().style(equal_height=False):
-            with gr.Column(variant='panel'):
+            with gr.Column(scale=4, variant='compact'):
                 image2 = gr.Image(elem_id="pnginfo_image2", label="Source", source="upload", interactive=True, type="pil")
 
-            with gr.Column(variant='panel'):
+            with gr.Column(scale=1, elem_classes="interrogate-col"):
+                interrogate2 = gr.Button('Interrogate\nCLIP', elem_id="interrogate2")
+                deepbooru2 = gr.Button('Interrogate\nDeepBooru', elem_id="deepbooru2")
+                pnginfo2 = gr.Button('Get\nPNG Info', elem_id="pnginfo")
+
+            with gr.Column(scale=6, variant='compact'):
                 html2 = gr.HTML()
-                prompt2 = gr.Textbox(label="Prompt", elem_id="prompt2", show_label=False, interactive=False, placeholder="Prompt", lines=2, elem_classes=["prompt"])
-                negative2 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt2", interactive=False, show_label=False, placeholder="Negative prompt", lines=3, elem_classes=["prompt"])
+                prompt2 = gr.Textbox(label="Prompt", elem_id="prompt2", show_label=False, interactive=False, placeholder="Prompt", lines=3, elem_classes=["prompt"])
+                negative2 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt2", interactive=False, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"])
                 extra2 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=False, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
                 generation_info2 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info2")
                 html2a = gr.HTML()
@@ -247,6 +299,46 @@ def add_tab():
             inputs=[image2],
             outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
         )
+
+        pnginfo.click(
+            fn=run_pnginfo,
+            inputs=[image1],
+            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+        )
+
+        pnginfo2.click(
+            fn=run_pnginfo,
+            inputs=[image2],
+            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+        )
+
+        interrogate.click(
+            fn=interrogator,
+            inputs=[image1],
+            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+        )
+
+        deepbooru.click(
+            fn=interrogate_deepbooru,
+            inputs=[image1],
+            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+        )
+
+        interrogate2.click(
+            fn=interrogator,
+            inputs=[image2],
+            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+        )
+
+        deepbooru2.click(
+            fn=interrogate_deepbooru,
+            inputs=[image2],
+            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+        )
     return [(pnginfo_diff, "PNG Info Diff", "pnginfo_diff")]
 
+def on_ui_settings():
+    shared.opts.add_option("pnginfo_diff_default_neg_prompt", shared.OptionInfo(DEFAULT_NEGATIVE, "Default Negative prompt", section=("pnginfo_diff", "PNGInfo Diff")))
+
+script_callbacks.on_ui_settings(on_ui_settings)
 script_callbacks.on_ui_tabs(add_tab)
