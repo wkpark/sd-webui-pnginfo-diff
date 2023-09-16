@@ -1,7 +1,9 @@
 import html
+import json
 import re
 import gradio as gr
 
+from copy import copy
 from difflib import Differ
 
 from modules import script_callbacks, shared, images, ui_common, deepbooru
@@ -13,7 +15,7 @@ DEFAULT_NEGATIVE = 'SimpleNegative, EasyNegative, (badhandv4), negative_hand-neg
 
 def interrogator(image):
     if image is None:
-        return '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
 
     # call interrogate
     prompt = shared.interrogator.interrogate(image.convert("RGB"))
@@ -22,7 +24,7 @@ def interrogator(image):
 
 def interrogate_deepbooru(image):
     if image is None:
-        return '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
 
     # deepboru
     prompt = deepbooru.model.tag(image)
@@ -41,6 +43,7 @@ def prepare_pnginfo(image, prompt):
         res, lastline = parse_prompt(geninfo)
         info = "Prompt by deepbooru/interrogate"
         negative = res["Negative prompt"]
+
     else:
         clip_skip = shared.opts.CLIP_stop_at_last_layers
         negative = shared.opts.data.get("pnginfo_diff_default_neg_prompt", DEFAULT_NEGATIVE)
@@ -49,18 +52,41 @@ def prepare_pnginfo(image, prompt):
         geninfo = prompt + "\n\n" + "Negative prompt: " + negative + "\n" + lastline
         info = "Prompt by deepbooru/interrogate, default negative prompt used, image size detected"
 
-    return '', geninfo, prompt, negative, lastline, info
+    return {}, gr.update(choices=[], value=[]), '', geninfo, prompt, negative, lastline, info
 
 def run_pnginfo(image):
     if image is None:
-        return '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
 
     geninfo, items = images.read_info_from_image(image)
 
+    extra_params = []
     if geninfo is not None:
         res, lastline = parse_prompt(geninfo)
+
+        # parse lastline
+        ret = parse_lastline(lastline)
+
+        known_keywords = [
+            "Negative prompt", "Steps", "Sampler", "CFG scale", "Seed", "Size", "Model hash", "Model", "Lora",
+            "VAE hash", "VAE", "Denoising strength", "Clip skip", "TI hashes",
+        ]
+
+        for k in ret.keys():
+            if k not in known_keywords:
+                #if any(s in k for s in known_keywords):
+                #    continue
+                j = k.find(" ")
+                if j > 0:
+                    k = k[0:j].strip()
+                    if len(k) > 0:
+                        extra_params.append(k)
+
+        extra_params = sorted(set(extra_params))
+        ret["."] = extra_params
     else:
         res, lastline = {}, ''
+        ret = {}
 
     info = ''
     for key, text in items.items():
@@ -74,13 +100,13 @@ def run_pnginfo(image):
     if len(res) == 0 and len(info) == 0:
         message = "Nothing found in the image."
         info = f"<div><p>{message}<p></div>"
-        return '', geninfo, '', '', lastline, info
+        return {}, gr.update(choices=[], value=[]), '', geninfo, '', '', lastline, info
     if "Prompt" not in res.keys():
         res["Prompt"] = ''
     if "Negative prompt" not in res.keys():
         res["Negative prompt"] = ''
 
-    return '', geninfo, res["Prompt"], res["Negative prompt"], lastline, info
+    return ret, gr.update(choices=extra_params, value=extra_params), '', geninfo, res["Prompt"], res["Negative prompt"], lastline, info
 
 def plaintext_to_html(text):
     text = "<p>" + "<br>\n".join([f"{html.escape(x)}" for x in text.split('\n')]) + "</p>"
@@ -136,60 +162,36 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
 
     return res, lastline
 
-def parse_remain_paramters(lastline: str):
+# from modules/generation_parameters_copypaste.py
+re_param_code = r'\s*([\w ]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
+re_param = re.compile(re_param_code)
+
+def quote(text):
+    if ',' not in str(text) and '\n' not in str(text) and ':' not in str(text):
+        return text
+
+    return json.dumps(text, ensure_ascii=False)
+
+def unquote(text):
+    if len(text) == 0 or text[0] != '"' or text[-1] != '"':
+        return text
+
+    try:
+        return json.loads(text)
+    except Exception:
+        return text
+
+def parse_lastline(lastline):
+    """from parse_generation_parameters(x: str)"""
     res = {}
     for k, v in re_param.findall(lastline):
         try:
             if v[0] == '"' and v[-1] == '"':
                 v = unquote(v)
 
-            m = re_imagesize.match(v)
-            if m is not None:
-                res[f"{k}-1"] = m.group(1)
-                res[f"{k}-2"] = m.group(2)
-            else:
-                res[k] = v
+            res[k] = v
         except Exception:
             print(f"Error parsing \"{k}: {v}\"")
-
-    # Missing CLIP skip means it was set to 1 (the default)
-    if "Clip skip" not in res:
-        res["Clip skip"] = "1"
-
-    hypernet = res.get("Hypernet", None)
-    if hypernet is not None:
-        res["Prompt"] += f"""<hypernet:{hypernet}:{res.get("Hypernet strength", "1.0")}>"""
-
-    if "Hires resize-1" not in res:
-        res["Hires resize-1"] = 0
-        res["Hires resize-2"] = 0
-
-    if "Hires sampler" not in res:
-        res["Hires sampler"] = "Use same sampler"
-
-    if "Hires prompt" not in res:
-        res["Hires prompt"] = ""
-
-    if "Hires negative prompt" not in res:
-        res["Hires negative prompt"] = ""
-
-    ##restore_old_hires_fix_params(res)
-
-    # Missing RNG means the default was set, which is GPU RNG
-    if "RNG" not in res:
-        res["RNG"] = "GPU"
-
-    if "Schedule type" not in res:
-        res["Schedule type"] = "Automatic"
-
-    if "Schedule max sigma" not in res:
-        res["Schedule max sigma"] = 0
-
-    if "Schedule min sigma" not in res:
-        res["Schedule min sigma"] = 0
-
-    if "Schedule rho" not in res:
-        res["Schedule rho"] = 0
 
     return res
 
@@ -219,11 +221,13 @@ def add_tab():
 
             with gr.Column(scale=6, variant='compact'):
                 html1 = gr.HTML()
-                prompt1 = gr.Textbox(label="Prompt", elem_id="prompt1", show_label=False, interactive=False, placeholder="Prompt", lines=3, elem_classes=["prompt"])
-                negative1 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt1", interactive=False, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"])
+                prompt1 = gr.Textbox(label="Prompt", elem_id="prompt1", show_label=False, interactive=True, placeholder="Prompt", lines=3, elem_classes=["prompt"], show_copy_button=True)
+                negative1 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt1", interactive=True, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"], show_copy_button=True)
                 extra1 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=False, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
-                generation_info1 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info2")
+                gen_info_orig1 = gr.State({})
+                generation_info1 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info1")
                 html1a = gr.HTML()
+                param1 =  gr.CheckboxGroup(label="Extra params", choices=[], value=[], multiselect=True)
                 with gr.Row():
                     buttons1 = parameters_copypaste.create_buttons(["txt2img", "img2img", "inpaint", "extras"])
 
@@ -243,11 +247,13 @@ def add_tab():
 
             with gr.Column(scale=6, variant='compact'):
                 html2 = gr.HTML()
-                prompt2 = gr.Textbox(label="Prompt", elem_id="prompt2", show_label=False, interactive=False, placeholder="Prompt", lines=3, elem_classes=["prompt"])
-                negative2 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt2", interactive=False, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"])
+                prompt2 = gr.Textbox(label="Prompt", elem_id="prompt2", show_label=False, interactive=True, placeholder="Prompt", lines=3, elem_classes=["prompt"], show_copy_button=True)
+                negative2 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt2", interactive=True, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"], show_copy_button=True)
                 extra2 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=False, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
+                gen_info_orig2 = gr.State({})
                 generation_info2 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info2")
                 html2a = gr.HTML()
+                param2 =  gr.CheckboxGroup(label="Extra params", choices=[], value=[], multiselect=True)
                 with gr.Row():
                     buttons2 = parameters_copypaste.create_buttons(["txt2img", "img2img", "inpaint", "extras"])
 
@@ -271,6 +277,37 @@ def add_tab():
                 neg_prompt_diff = gr.Button(value="Negative prompt diff")
                 extra_diff = gr.Button(value="Extra info diff")
 
+        def check_extra_params(gen_info, params, prompt, negative):
+            gen = gen_info.copy()
+            all_params = []
+            if "." in gen:
+                all_params = gen.pop(".")
+                deselect = set(all_params) - set(params)
+                selected = {}
+                for k,v in gen.items():
+                    if any(s in k for s in deselect):
+                        continue
+                    selected[k] = v
+            else:
+                selected = gen
+
+            generation_params = ", ".join([k if k == v else f'{k}: {quote(v)}' for k, v in selected.items() if v is not None])
+
+            geninfo = prompt + "\nNegative prompt:" + negative + "\n" + generation_params
+            return geninfo, generation_params
+
+        param1.change(
+            fn=check_extra_params,
+            inputs=[gen_info_orig1, param1, prompt1, negative1],
+            outputs=[generation_info1, extra1]
+        )
+
+        param2.change(
+            fn=check_extra_params,
+            inputs=[gen_info_orig2, param2, prompt2, negative2],
+            outputs=[generation_info2, extra2]
+        )
+
         prompt_diff.click(
             fn=diff_texts,
             inputs=[direct, prompt1, prompt2],
@@ -292,49 +329,49 @@ def add_tab():
         image1.change(
             fn=run_pnginfo,
             inputs=[image1],
-            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
         )
 
         image2.change(
             fn=run_pnginfo,
             inputs=[image2],
-            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
         )
 
         pnginfo.click(
             fn=run_pnginfo,
             inputs=[image1],
-            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
         )
 
         pnginfo2.click(
             fn=run_pnginfo,
             inputs=[image2],
-            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
         )
 
         interrogate.click(
             fn=interrogator,
             inputs=[image1],
-            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
         )
 
         deepbooru.click(
             fn=interrogate_deepbooru,
             inputs=[image1],
-            outputs=[html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
         )
 
         interrogate2.click(
             fn=interrogator,
             inputs=[image2],
-            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
         )
 
         deepbooru2.click(
             fn=interrogate_deepbooru,
             inputs=[image2],
-            outputs=[html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
         )
     return [(pnginfo_diff, "PNG Info Diff", "pnginfo_diff")]
 
