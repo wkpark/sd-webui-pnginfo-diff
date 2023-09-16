@@ -208,7 +208,7 @@ def diff_texts(direct, text1, text2):
 
 def add_tab():
     with gr.Blocks(analytics_enabled=False) as pnginfo_diff:
-        with gr.Row().style(equal_height=False):
+        with gr.Row(equal_height=False):
             with gr.Column(scale=4, variant='compact'):
                 image1 = gr.Image(elem_id="pnginfo_image1", label="Source", source="upload", interactive=True, type="pil")
 
@@ -232,7 +232,7 @@ def add_tab():
                         paste_button=button, tabname=tabname, source_text_component=generation_info1, source_image_component=image1,
                     ))
 
-        with gr.Row().style(equal_height=False):
+        with gr.Row(equal_height=False):
             with gr.Column(scale=4, variant='compact'):
                 image2 = gr.Image(elem_id="pnginfo_image2", label="Source", source="upload", interactive=True, type="pil")
 
@@ -262,7 +262,8 @@ def add_tab():
                     label="Diff",
                     combine_adjacent=True,
                     show_legend=True,
-                ).style(color_map={"-": "red", "+": "green"})
+                    color_map={"-": "red", "+": "green"}
+                )
 
             with gr.Row():
                 direct = gr.Radio(["A-B", "B-A"], label="Direction", show_label=False, value="A-B")
