@@ -15,7 +15,7 @@ DEFAULT_NEGATIVE = 'SimpleNegative, EasyNegative, (badhandv4), negative_hand-neg
 
 def interrogator(image):
     if image is None:
-        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[], visible=False), '', '', '', '', '', ''
 
     # call interrogate
     prompt = shared.interrogator.interrogate(image.convert("RGB"))
@@ -24,7 +24,7 @@ def interrogator(image):
 
 def interrogate_deepbooru(image):
     if image is None:
-        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[], visible=False), '', '', '', '', '', ''
 
     # deepboru
     prompt = deepbooru.model.tag(image)
@@ -52,11 +52,11 @@ def prepare_pnginfo(image, prompt):
         geninfo = prompt + "\n\n" + "Negative prompt: " + negative + "\n" + lastline
         info = "Prompt by deepbooru/interrogate, default negative prompt used, image size detected"
 
-    return {}, gr.update(choices=[], value=[]), '', geninfo, prompt, negative, lastline, info
+    return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, prompt, negative, lastline, info
 
 def run_pnginfo(image):
     if image is None:
-        return {}, gr.update(choices=[], value=[]), '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[], visible=False), '', '', '', '', '', ''
 
     geninfo, items = images.read_info_from_image(image)
 
@@ -83,7 +83,7 @@ def run_pnginfo(image):
                         extra_params.append(k)
 
         extra_params = sorted(set(extra_params))
-        ret["."] = extra_params
+        ret["."] = extra_params + ["Script"]
     else:
         res, lastline = {}, ''
         ret = {}
@@ -100,13 +100,13 @@ def run_pnginfo(image):
     if len(res) == 0 and len(info) == 0:
         message = "Nothing found in the image."
         info = f"<div><p>{message}<p></div>"
-        return {}, gr.update(choices=[], value=[]), '', geninfo, '', '', lastline, info
+        return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, '', '', lastline, info
     if "Prompt" not in res.keys():
         res["Prompt"] = ''
     if "Negative prompt" not in res.keys():
         res["Negative prompt"] = ''
 
-    return ret, gr.update(choices=extra_params, value=extra_params), '', geninfo, res["Prompt"], res["Negative prompt"], lastline, info
+    return ret, gr.update(choices=extra_params, value=extra_params, visible=True if len(extra_params)>0 else False), '', geninfo, res["Prompt"], res["Negative prompt"], lastline, info
 
 def plaintext_to_html(text):
     text = "<p>" + "<br>\n".join([f"{html.escape(x)}" for x in text.split('\n')]) + "</p>"
@@ -163,7 +163,7 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     return res, lastline
 
 # from modules/generation_parameters_copypaste.py
-re_param_code = r'\s*([\w ]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
+re_param_code = r'\s*(\w[\w \-/]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
 re_param = re.compile(re_param_code)
 
 def quote(text):
@@ -223,7 +223,7 @@ def add_tab():
                 html1 = gr.HTML()
                 prompt1 = gr.Textbox(label="Prompt", elem_id="prompt1", show_label=False, interactive=True, placeholder="Prompt", lines=3, elem_classes=["prompt"], show_copy_button=True)
                 negative1 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt1", interactive=True, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"], show_copy_button=True)
-                extra1 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=False, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
+                extra1 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=True, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
                 gen_info_orig1 = gr.State({})
                 generation_info1 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info1")
                 html1a = gr.HTML()
@@ -296,13 +296,13 @@ def add_tab():
             geninfo = prompt + "\nNegative prompt:" + negative + "\n" + generation_params
             return geninfo, generation_params
 
-        param1.change(
+        param1.select(
             fn=check_extra_params,
             inputs=[gen_info_orig1, param1, prompt1, negative1],
             outputs=[generation_info1, extra1]
         )
 
-        param2.change(
+        param2.select(
             fn=check_extra_params,
             inputs=[gen_info_orig2, param2, prompt2, negative2],
             outputs=[generation_info2, extra2]
