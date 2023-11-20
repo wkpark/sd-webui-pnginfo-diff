@@ -39,8 +39,9 @@ def prepare_pnginfo(image, prompt):
     geninfo, _ = images.read_info_from_image(image)
 
     info = ""
+    excluded = ""
     if geninfo is not None:
-        res, lastline = parse_prompt(geninfo)
+        res, lastline, excluded = parse_prompt(geninfo)
         info = "Prompt by deepbooru/interrogate"
         negative = res["Negative prompt"]
 
@@ -52,24 +53,25 @@ def prepare_pnginfo(image, prompt):
         geninfo = prompt + "\n\n" + "Negative prompt: " + negative + "\n" + lastline
         info = "Prompt by deepbooru/interrogate, default negative prompt used, image size detected"
 
-    return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, prompt, negative, lastline, info
+    return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, prompt, negative, lastline, excluded, info
 
 def run_pnginfo(image):
     if image is None:
-        return {}, gr.update(choices=[], value=[], visible=False), '', '', '', '', '', ''
+        return {}, gr.update(choices=[], value=[], visible=False), '', '', '', '', '', '', ''
 
     geninfo, items = images.read_info_from_image(image)
 
     extra_params = []
+    excluded = ""
     if geninfo is not None:
-        res, lastline = parse_prompt(geninfo)
+        res, lastline, excluded = parse_prompt(geninfo)
 
         # parse lastline
         ret = parse_lastline(lastline)
 
         known_keywords = [
             "Negative prompt", "Steps", "Sampler", "CFG scale", "Seed", "Size", "Model hash", "Model", "Lora",
-            "VAE hash", "VAE", "Denoising strength", "Clip skip", "TI hashes",
+            "VAE hash", "VAE", "Denoising strength", "Clip skip", "TI hashes", "CFG Scale",
         ]
 
         for k in ret.keys():
@@ -84,6 +86,8 @@ def run_pnginfo(image):
 
         extra_params = sorted(set(extra_params))
         ret["."] = extra_params + ["Script"]
+        # fix geninfo to exclude "excluded"
+        geninfo = res["Prompt"] + "\nNegative prompt:" + res["Negative prompt"] + "\n" + lastline
     else:
         res, lastline = {}, ''
         ret = {}
@@ -100,19 +104,20 @@ def run_pnginfo(image):
     if len(res) == 0 and len(info) == 0:
         message = "Nothing found in the image."
         info = f"<div><p>{message}<p></div>"
-        return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, '', '', lastline, info
+        return {}, gr.update(choices=[], value=[], visible=False), '', geninfo, '', '', lastline, excluded, info
     if "Prompt" not in res.keys():
         res["Prompt"] = ''
     if "Negative prompt" not in res.keys():
         res["Negative prompt"] = ''
 
-    return ret, gr.update(choices=extra_params, value=extra_params, visible=True if len(extra_params)>0 else False), '', geninfo, res["Prompt"], res["Negative prompt"], lastline, info
+    return ret, gr.update(choices=extra_params, value=extra_params, visible=True if len(extra_params)>0 else False), '', geninfo, res["Prompt"], res["Negative prompt"], lastline, excluded, info
 
 def plaintext_to_html(text):
     text = "<p>" + "<br>\n".join([f"{html.escape(x)}" for x in text.split('\n')]) + "</p>"
     return text
 
-re_param_code = r'\s*([\w ]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
+# from modules/generation_parameters_copypaste.py
+re_param_code = r'\s*(\w[\w \-/]+):\s*("(?:\\.|[^\\"])+"|[^,]*)(?:,|$)'
 re_param = re.compile(re_param_code)
 
 def parse_prompt(x: str):
@@ -135,6 +140,13 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     done_with_prompt = False
 
     *lines, lastline = x.strip().split("\n")
+
+    excluded = []
+    while "Steps" not in lastline:
+        excluded.insert(0, lastline)
+        lastline = lines.pop()
+    print("EXCLUDED", excluded)
+
     if len(re_param.findall(lastline)) < 3:
         lines.append(lastline)
         lastline = ''
@@ -160,11 +172,10 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     res["Prompt"] = prompt
     res["Negative prompt"] = negative_prompt
 
-    return res, lastline
+    excluded = "\n".join(excluded)
 
-# from modules/generation_parameters_copypaste.py
-re_param_code = r'\s*(\w[\w \-/]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
-re_param = re.compile(re_param_code)
+    return res, lastline, excluded
+
 
 def quote(text):
     if ',' not in str(text) and '\n' not in str(text) and ':' not in str(text):
@@ -224,6 +235,7 @@ def add_tab():
                 prompt1 = gr.Textbox(label="Prompt", elem_id="prompt1", show_label=False, interactive=True, placeholder="Prompt", lines=3, elem_classes=["prompt"], show_copy_button=True)
                 negative1 = gr.Textbox(label="Negative prompt", elem_id="neg_prompt1", interactive=True, show_label=False, placeholder="Negative prompt", lines=2, elem_classes=["prompt"], show_copy_button=True)
                 extra1 = gr.Textbox(label="Extra", elem_id="extra11", show_label=False, interactive=True, placeholder="Seed, Model...", lines=1, elem_classes=["prompt"])
+                excluded = gr.Textbox(label="Excluded", elem_id="excluded", show_label=False, interactive=True, lines=1, elem_classes=["excluded"])
                 gen_info_orig1 = gr.State({})
                 generation_info1 = gr.Textbox(visible=False, elem_id="pnginfo_generation_info1")
                 html1a = gr.HTML()
@@ -329,49 +341,49 @@ def add_tab():
         image1.change(
             fn=run_pnginfo,
             inputs=[image1],
-            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, excluded, html1a],
         )
 
         image2.change(
             fn=run_pnginfo,
             inputs=[image2],
-            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, excluded, html2a],
         )
 
         pnginfo.click(
             fn=run_pnginfo,
             inputs=[image1],
-            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, excluded, html1a],
         )
 
         pnginfo2.click(
             fn=run_pnginfo,
             inputs=[image2],
-            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, excluded, html2a],
         )
 
         interrogate.click(
             fn=interrogator,
             inputs=[image1],
-            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, excluded, html1a],
         )
 
         deepbooru.click(
             fn=interrogate_deepbooru,
             inputs=[image1],
-            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, html1a],
+            outputs=[gen_info_orig1, param1, html1, generation_info1, prompt1, negative1, extra1, excluded, html1a],
         )
 
         interrogate2.click(
             fn=interrogator,
             inputs=[image2],
-            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, excluded, html2a],
         )
 
         deepbooru2.click(
             fn=interrogate_deepbooru,
             inputs=[image2],
-            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, html2a],
+            outputs=[gen_info_orig2, param2, html2, generation_info2, prompt2, negative2, extra2, excluded, html2a],
         )
     return [(pnginfo_diff, "PNG Info Diff", "pnginfo_diff")]
 
