@@ -145,7 +145,6 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     while "Steps" not in lastline:
         excluded.insert(0, lastline)
         lastline = lines.pop()
-    print("EXCLUDED", excluded)
 
     if len(re_param.findall(lastline)) < 3:
         lines.append(lastline)
