@@ -205,17 +205,19 @@ def parse_lastline(lastline):
 
     return res
 
+re_split_code = r"([(),\.\s{}\[\]]|[0-9]|[0-9]*\.[0-9]+)"
+re_split = re.compile(re_split_code)
 def diff_texts(direct, text1, text2):
     d = Differ()
     if direct == "A-B":
         return [
             (token[2:], token[0] if token[0] != " " else None)
-            for token in d.compare(text1, text2)
+            for token in d.compare(re_split.split(text1), re_split.split(text2))
         ]
     else:
         return [
             (token[2:], token[0] if token[0] != " " else None)
-            for token in d.compare(text2, text1)
+            for token in d.compare(re_split.split(text2), re_split.split(text1))
         ]
 
 def add_tab():
@@ -279,7 +281,8 @@ def add_tab():
                     label="Diff",
                     combine_adjacent=True,
                     show_legend=True,
-                    color_map={"-": "red", "+": "green"}
+                    color_map={"-": "red", "+": "green"},
+                    elem_classes=["pngdiff"],
                 )
 
             with gr.Row():
