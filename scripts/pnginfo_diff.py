@@ -205,7 +205,7 @@ def parse_lastline(lastline):
 
     return res
 
-re_split_code = r"([(),\.\s{}\[\]]|[0-9]|[0-9]*\.[0-9]+)"
+re_split_code = r"([(),\s{}\[\]]|(?<!\d)\.)"
 re_split = re.compile(re_split_code)
 def diff_texts(direct, text1, text2):
     d = Differ()
